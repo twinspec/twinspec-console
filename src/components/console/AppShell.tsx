@@ -1,7 +1,7 @@
 "use client";
 
-import { Sidebar } from "../Sidebar";
-import { Topbar } from "../Topbar";
+import { Sidebar } from "./Sidebar";
+import { Topbar } from "./Topbar";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
