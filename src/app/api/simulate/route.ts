@@ -3,7 +3,18 @@ import { createHash } from "crypto";
 
 export const runtime = "nodejs";
 
-type Body = { instrumentState: any };
+type Body = { instrumentState?: any };
+
+async function safeJson(req: Request): Promise<Body | null> {
+  // Avoid req.json() throwing on empty/truncated bodies
+  const text = await req.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as Body;
+  } catch {
+    return null;
+  }
+}
 
 function randDeterministic(seed: string) {
   const h = createHash("sha256").update(seed).digest();
@@ -14,15 +25,15 @@ function randDeterministic(seed: string) {
   };
 }
 
-function makePattern(seed: string, w = 512, h = 512) {
+function makePattern(instrumentState: any, seed: string, w = 512, h = 512) {
   const r = randDeterministic(seed);
   const pixels = new Array<number>(w * h);
 
   // synthetic “peaks” controlled by geometry knobs
-  const ai = Number(seed.match(/"ai_deg":([0-9.]+)/)?.[1] ?? 0.12);
-  const phi = Number(seed.match(/"phi_deg":(-?[0-9.]+)/)?.[1] ?? 0);
-  const tilt = Number(seed.match(/"detTilt_deg":(-?[0-9.]+)/)?.[1] ?? 0);
-  const dist = Number(seed.match(/"detDist_mm":([0-9.]+)/)?.[1] ?? 200);
+  const ai = Number(instrumentState?.geometry?.ai_deg ?? 0.12);
+  const phi = Number(instrumentState?.geometry?.phi_deg ?? 0);
+  const tilt = Number(instrumentState?.geometry?.detTilt_deg ?? 0);
+  const dist = Number(instrumentState?.geometry?.detDist_mm ?? 200);
 
   const cx = 256 + Math.round(phi * 0.7);
   const cy = 256 + Math.round(tilt * 4);
@@ -37,7 +48,10 @@ function makePattern(seed: string, w = 512, h = 512) {
       const rr = Math.sqrt(dx * dx + dy * dy);
 
       const ring = Math.exp(-((rr - ringR) * (rr - ringR)) / (2 * sigma * sigma));
-      const peak = Math.exp(-((dx - 35) * (dx - 35) + (dy + 20) * (dy + 20)) / (2 * (sigma * 0.7) * (sigma * 0.7)));
+      const peak = Math.exp(
+        -((dx - 35) * (dx - 35) + (dy + 20) * (dy + 20)) /
+          (2 * (sigma * 0.7) * (sigma * 0.7))
+      );
       const noise = 0.08 * (r() - 0.5);
 
       let v = 0.15 + 0.75 * ring + 0.55 * peak + noise;
@@ -49,7 +63,7 @@ function makePattern(seed: string, w = 512, h = 512) {
   return { width: w, height: h, pixels, note: "Synthetic stub; replace with real GIWAXS simulator." };
 }
 
-function makeLinecuts(seed: string) {
+function makeLinecuts(instrumentState: any, seed: string) {
   const r = randDeterministic(seed);
   const n = 200;
   const q: number[] = [];
@@ -57,8 +71,8 @@ function makeLinecuts(seed: string) {
   const outOfPlane: number[] = [];
 
   // emulate a few peaks with shift linked to ai/phi
-  const ai = Number(seed.match(/"ai_deg":([0-9.]+)/)?.[1] ?? 0.12);
-  const phi = Number(seed.match(/"phi_deg":(-?[0-9.]+)/)?.[1] ?? 0);
+  const ai = Number(instrumentState?.geometry?.ai_deg ?? 0.12);
+  const phi = Number(instrumentState?.geometry?.phi_deg ?? 0);
 
   const p1 = 0.30 + ai * 0.6;
   const p2 = 0.85 + Math.abs(phi) * 0.002;
@@ -79,19 +93,28 @@ function makeLinecuts(seed: string) {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as Body;
+  const body = await safeJson(req);
+
+  // If the client aborted or sent an empty body, don't throw—respond cleanly.
+  if (!body || body.instrumentState == null) {
+    return NextResponse.json(
+      { error: "Missing or invalid JSON body. Expected { instrumentState: {...} }" },
+      { status: 400 }
+    );
+  }
+
   const instrumentState = body.instrumentState ?? {};
   const seed = JSON.stringify(instrumentState);
 
   const hash = createHash("sha256").update(seed).digest("hex").slice(0, 12);
 
   // compute warnings/metrics “instrument feel”
-  const ai = instrumentState?.geometry?.ai_deg ?? 0.12;
-  const exposure = instrumentState?.acquisition?.exposure_s ?? 1;
-  const frames = instrumentState?.acquisition?.frames ?? 1;
-  const binning = instrumentState?.acquisition?.binning ?? 1;
+  const ai = Number(instrumentState?.geometry?.ai_deg ?? 0.12);
+  const exposure = Number(instrumentState?.acquisition?.exposure_s ?? 1);
+  const frames = Number(instrumentState?.acquisition?.frames ?? 1);
+  const binning = Number(instrumentState?.acquisition?.binning ?? 1);
 
-  const snrProxy = (exposure * frames) / binning;
+  const snrProxy = (exposure * frames) / Math.max(1e-9, binning);
   const satProxy = Math.min(0.999, 0.6 + 0.08 * exposure + 0.02 * frames);
 
   const warnings: Array<{ code: string; level: "warn" | "danger" | "info"; message: string }> = [];
@@ -110,7 +133,7 @@ export async function POST(req: Request) {
     snr_proxy: snrProxy,
     sat_proxy: satProxy,
     ai_deg: ai,
-    phi_deg: instrumentState?.geometry?.phi_deg ?? 0
+    phi_deg: Number(instrumentState?.geometry?.phi_deg ?? 0)
   };
 
   const logs = [
@@ -118,8 +141,8 @@ export async function POST(req: Request) {
   ];
 
   const result = {
-    pattern2d: makePattern(seed),
-    linecuts: makeLinecuts(seed),
+    pattern2d: makePattern(instrumentState, seed),
+    linecuts: makeLinecuts(instrumentState, seed),
     metrics,
     warnings,
     provenance: {
