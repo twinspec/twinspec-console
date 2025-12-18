@@ -77,10 +77,19 @@ export type InstrumentState = {
   };
 };
 
+
+export type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends (infer U)[]
+    ? U[] // keep arrays simple for now
+    : T[K] extends object
+      ? DeepPartial<T[K]>
+      : T[K];
+};
+
 type LastInteraction = { intent: InteractionIntent; at: number; source: string };
 
 type PlannerProposal = {
-  patch: Partial<InstrumentState>;
+  patch: DeepPartial<InstrumentState>;
   rationale: string;
   createdAt: string;
 };
@@ -108,7 +117,8 @@ type Store = {
   setPriorsStatus: (s: Store["priorsStatus"], err?: string) => void;
 
   setDataset: (datasetId: string) => void;
-  applyPatch: (patch: Partial<InstrumentState>, intent?: InteractionIntent, source?: string) => void;
+  applyPatch: (patch: DeepPartial<InstrumentState>, intent?: InteractionIntent, source?: string) => void;
+
 
   persistCurrentDataset: () => void;
   hydrateDataset: (datasetId: string) => void;
@@ -308,7 +318,7 @@ function isObject(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null && !Array.isArray(x);
 }
 
-function deepMerge<T>(base: T, patch: Partial<T>): T {
+function deepMerge<T>(base: T, patch: DeepPartial<T>): T {
   const out: any = Array.isArray(base) ? [...(base as any)] : { ...(base as any) };
   for (const [k, v] of Object.entries(patch as any)) {
     if (isObject(v) && isObject((out as any)[k])) {
