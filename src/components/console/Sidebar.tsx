@@ -3,17 +3,24 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+function isActivePath(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(href + "/");
+}
+
 function NavItem({ href, label }: { href: string; label: string }) {
   const pathname = usePathname();
-  const active = pathname === href;
+  const active = isActivePath(pathname, href);
 
   return (
     <Link
       href={href}
       className={[
-        "block rounded-xl px-3 py-2 text-sm",
-        active ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-100",
+        "flex h-10 w-full items-center justify-center rounded-xl text-xs font-medium transition",
+        active
+          ? "bg-slate-900 text-white"
+          : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
       ].join(" ")}
+      title={label}
     >
       {label}
     </Link>
@@ -22,35 +29,23 @@ function NavItem({ href, label }: { href: string; label: string }) {
 
 export function Sidebar() {
   return (
-    <aside className="w-[260px] shrink-0 border-r border-slate-200 bg-white">
-      <div className="px-4 py-4">
-        <div className="flex items-center gap-2">
-          <div className="h-9 w-9 rounded-xl bg-slate-900" />
-          <div>
-            <div className="text-sm font-semibold">TwinSpec</div>
-            <div className="text-xs text-slate-500">Lab Console</div>
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <div className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Lab Console
-          </div>
-          <div className="mt-2 space-y-1">
-            <NavItem href="/console/instrument" label="Instrument Console" />
-            <NavItem href="/console/data" label="Data Viewer" />
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <div className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Site
-          </div>
-          <div className="mt-2 space-y-1">
-            <NavItem href="/" label="Home" />
-          </div>
-        </div>
+    <aside className="w-[88px] shrink-0 border-r border-slate-200 bg-white">
+      {/* Brand mark */}
+      <div className="flex h-16 items-center justify-center border-b border-slate-200">
+        <div className="h-9 w-9 rounded-xl bg-slate-900" />
       </div>
+
+      {/* Navigation */}
+      <nav className="flex flex-col gap-2 px-3 py-4">
+        <div className="flex flex-col gap-1">
+          <NavItem href="/app/console" label="Console" />
+          <NavItem href="/app/data" label="Data" />
+        </div>
+
+        <div className="mt-4 border-t border-slate-200 pt-3">
+          <NavItem href="/" label="Home" />
+        </div>
+      </nav>
     </aside>
   );
 }
