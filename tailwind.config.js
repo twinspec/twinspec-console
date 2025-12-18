@@ -1,15 +1,10 @@
-import type { Config } from "tailwindcss";
-
-export default {
-  content: ["./src/**/*.{ts,tsx}"],
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ["./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
-      borderRadius: {
-        xl2: "1rem"
-      },
-      boxShadow: {
-        card: "0 8px 28px rgba(0,0,0,0.10)"
-      },
+      borderRadius: { xl2: "1rem" },
+      boxShadow: { card: "0 8px 28px rgba(0,0,0,0.10)" },
       colors: {
         bg: "rgb(var(--bg) / <alpha-value>)",
         surface: "rgb(var(--surface) / <alpha-value>)",
@@ -25,4 +20,4 @@ export default {
     }
   },
   plugins: []
-} satisfies Config;
+};
