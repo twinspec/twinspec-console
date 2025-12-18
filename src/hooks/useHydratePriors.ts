@@ -11,19 +11,24 @@ export function useHydratePriors() {
   useEffect(() => {
     if (priorsStatus !== "idle") return;
 
+    const ac = new AbortController();
+
     const run = async () => {
       setPriorsStatus("loading");
       try {
-        const res = await fetch("/api/priors", { method: "GET" });
+        const res = await fetch("/api/priors", { method: "GET", signal: ac.signal });
         if (!res.ok) throw new Error(`priors failed: ${res.status}`);
         const data = await res.json();
         setPriors(data);
         setPriorsStatus("ready");
       } catch (e: any) {
+        if (e?.name === "AbortError") return;
         setPriorsStatus("error", e?.message ?? "priors error");
       }
     };
 
-    run();
+    void run();
+
+    return () => ac.abort();
   }, [priorsStatus, setPriors, setPriorsStatus]);
 }
