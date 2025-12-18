@@ -23,6 +23,12 @@ function lakehouseRoot() {
     : path.resolve(process.cwd(), "..", "twinspec-lakehouse");
 }
 
+function resolveFromLakehouse(rootAbs: string, relPath: string) {
+  // Normalize slashes and strip any leading slash so path.resolve doesn't jump roots.
+  const cleaned = String(relPath).replace(/\\/g, "/").replace(/^\/+/, "");
+  return path.resolve(rootAbs, cleaned);
+}
+
 function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }
@@ -87,7 +93,6 @@ function binToGrid(
   qxyMin: number,
   qxyMax: number
 ) {
-  // Accumulate into grid with mean intensity per bin
   const sum = new Float64Array(w * h);
   const cnt = new Uint32Array(w * h);
 
@@ -103,7 +108,6 @@ function binToGrid(
     cnt[idx] += 1;
   }
 
-  // Produce raw float grid
   const raw = new Float64Array(w * h);
   for (let i = 0; i < raw.length; i++) raw[i] = cnt[i] ? sum[i] / cnt[i] : 0;
 
@@ -111,10 +115,7 @@ function binToGrid(
 }
 
 function normalizeGrid(raw: Float64Array, clipLoQ = 0.01, clipHiQ = 0.99) {
-  // Robust normalize to 0..1 using quantile clipping
   const values: number[] = [];
-  values.length = 0;
-
   for (let i = 0; i < raw.length; i++) {
     const v = raw[i];
     if (v > 0 && Number.isFinite(v)) values.push(v);
@@ -157,24 +158,22 @@ export async function POST(req: Request) {
     { ts: new Date().toISOString(), level: "info", message: `simulate: dataset=${datasetId} hash=${hash}` }
   ];
 
-  // Default q bounds (your representative JSON confirms 0..2, 1/nm)
+  // Defaults (your representative JSON confirms 0..2, 1/nm)
   let qzMin = 0, qzMax = 2, qxyMin = 0, qxyMax = 2;
   let qUnits = "1/nm";
 
-  // Attempt to load characterization JSON for authoritative q_mapping + instrument info
   let charMeta: any = null;
 
   try {
     const root = lakehouseRoot();
 
-    if (!binding?.giwaxs2d_core_path) {
+    if (!binding?.characterization_json_path && !binding?.giwaxs2d_core_path) {
       warnings.push({
         code: "NO_LAKEHOUSE_BINDING",
         level: "warn",
-        message: "Dataset has no lakehouse binding; falling back to synthetic stub output."
+        message: "Dataset has no lakehouse binding; cannot resolve characterization JSON or core CSV."
       });
-      // fall back to old behavior if no binding
-      // (we still return a stable payload)
+
       return NextResponse.json({
         pattern2d: { width: 512, height: 512, pixels: new Array(512 * 512).fill(0), note: "No lakehouse binding." },
         linecuts: { q: [], inPlane: [], outOfPlane: [] },
@@ -185,9 +184,9 @@ export async function POST(req: Request) {
       });
     }
 
-    const coreAbs = path.join(root, binding.giwaxs2d_core_path);
+    // 1) Load characterization JSON if we have it (authoritative for q_mapping + digitized CSV path)
     const charAbs = binding.characterization_json_path
-      ? path.join(root, binding.characterization_json_path)
+      ? resolveFromLakehouse(root, binding.characterization_json_path)
       : null;
 
     if (charAbs) {
@@ -202,16 +201,44 @@ export async function POST(req: Request) {
       }
     }
 
+    // 2) Resolve core CSV path
+    const coreRelFromChar =
+      charMeta?.digitization?.outputs?.digitized_2d_csv_path
+        ? String(charMeta.digitization.outputs.digitized_2d_csv_path)
+        : null;
+
+    const coreRelFallback =
+      binding?.giwaxs2d_core_path ? String(binding.giwaxs2d_core_path) : null;
+
+    const coreRel = coreRelFromChar ?? coreRelFallback;
+
+    if (!coreRel) {
+      throw new Error(
+        "Could not resolve GIWAXS core CSV path. Missing charMeta.digitization.outputs.digitized_2d_csv_path and binding.giwaxs2d_core_path."
+      );
+    }
+
+    const coreAbs = resolveFromLakehouse(root, coreRel);
+
+    // Fail early with a clear path if the file doesn't exist
+    try {
+      await fs.access(coreAbs);
+    } catch {
+      throw new Error(
+        `ENOENT: no such file or directory, open '${coreAbs}'. Resolved from ${
+          coreRelFromChar ? "characterization JSON digitized_2d_csv_path" : "dataset binding giwaxs2d_core_path"
+        }.`
+      );
+    }
+
     const pts = await loadCoreCSV(coreAbs);
 
-    // Fixed grid to match your current console “instrument feel”
     const W = 512;
     const H = 512;
 
     const { raw, cnt } = binToGrid(pts, W, H, qzMin, qzMax, qxyMin, qxyMax);
     const { pixels, lo, hi } = normalizeGrid(raw, 0.01, 0.99);
 
-    // Simple metrics that are *real* and fast
     const nonzeroBins = (() => {
       let nz = 0;
       for (let i = 0; i < cnt.length; i++) if (cnt[i] > 0) nz++;
@@ -223,7 +250,6 @@ export async function POST(req: Request) {
     const frames = toNumber(instrumentState?.acquisition?.frames, 1);
     const binning = toNumber(instrumentState?.acquisition?.binning, 1);
 
-    // Keep your “instrument feel” proxies, but now tied to real data output
     const snrProxy = (exposure * frames) / Math.max(1e-9, binning);
     const satProxy = Math.min(0.999, 0.6 + 0.08 * exposure + 0.02 * frames);
 
@@ -259,7 +285,6 @@ export async function POST(req: Request) {
       clip_hi: hi
     };
 
-    // Keep linecuts empty until you finish 2D→1D reliably
     const linecuts = { q: [], inPlane: [], outOfPlane: [] };
 
     const provenanceExtra: Record<string, any> = {
@@ -273,7 +298,10 @@ export async function POST(req: Request) {
       wavelength_A: inst?.wavelength_A ?? null,
       incident_angle_deg_nominal: inst?.incident_angle_deg ?? null,
       characterization_id: charMeta?.characterization_id ?? "",
-      core_points: pts.length
+      core_points: pts.length,
+      core_csv_abs: coreAbs,
+      core_csv_rel: coreRel,
+      core_path_source: coreRelFromChar ? "characterization.digitization.outputs.digitized_2d_csv_path" : "dataset.lakehouse.giwaxs2d_core_path"
     };
 
     const result = {
