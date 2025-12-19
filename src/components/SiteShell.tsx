@@ -26,12 +26,16 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
 
           <nav className="flex items-center gap-6 text-sm text-muted">
             {nav.map((item) => {
-              const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+              const active =
+                pathname === item.href ||
+                (item.href !== "/" && pathname.startsWith(item.href));
               return (
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={active ? "text-ink" : "hover:text-ink transition-colors"}
+                  className={
+                    active ? "text-ink" : "hover:text-ink transition-colors"
+                  }
                 >
                   {item.label}
                 </Link>
@@ -42,6 +46,29 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <main className="flex-1">{children}</main>
+
+      <footer className="border-t border-border">
+        <div className="mx-auto max-w-6xl px-6 py-10 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="text-sm text-muted">
+            <div className="font-medium text-ink">TwinSpec</div>
+            <div>© 2025 TwinSpec. All rights reserved.</div>
+          </div>
+
+          <div className="flex gap-6 text-sm text-muted">
+            <Link href="/docs" className="hover:text-ink transition-colors">
+              Documentation
+            </Link>
+            <a
+              href="https://github.com/twinspec/"
+              target="_blank"
+              rel="noreferrer"
+              className="hover:text-ink transition-colors"
+            >
+              GitHub
+            </a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
