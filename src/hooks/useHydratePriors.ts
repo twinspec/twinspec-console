@@ -4,107 +4,207 @@ import { useEffect, useRef } from "react";
 import { useInstrumentStore } from "@/state/instrumentStore";
 
 /**
- * Hydrates /api/priors into zustand.
- * Improvements:
- * - abortable fetch (prevents “stuck loading” during fast refresh/navigation)
- * - watchdog: if stuck in loading > 6s, reset and retry
- * - retries (limited) with backoff
- * - richer error text (reads response body if present)
- * - uses cache: "no-store" to avoid weird caching in dev/proxy setups
+ * Hydrates /api/priors into zustand without “self-abort” on priorsStatus transitions.
+ *
+ * Key change:
+ * - This effect runs once on mount (no priorsStatus dependency), so setting
+ *   priorsStatus="loading" won't trigger a cleanup that aborts the active fetch.
  */
 export function useHydratePriors() {
-  const priorsStatus = useInstrumentStore((s) => s.priorsStatus);
-  const priorsError = useInstrumentStore((s) => s.priorsError);
   const setPriorsStatus = useInstrumentStore((s) => s.setPriorsStatus);
   const setPriors = useInstrumentStore((s) => s.setPriors);
 
   const startedRef = useRef(false);
-  const loadingStartedAtRef = useRef<number | null>(null);
-  const retryCountRef = useRef(0);
+  const ctrlRef = useRef<AbortController | null>(null);
+  const watchdogRef = useRef<number | null>(null);
   const retryTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // If we are already ready, do nothing.
-    if (priorsStatus === "ready") return;
-
-    // Watchdog: if "loading" is stuck too long, reset to idle so we can retry.
-    if (priorsStatus === "loading") {
-      if (loadingStartedAtRef.current == null) {
-        loadingStartedAtRef.current = Date.now();
-      } else if (Date.now() - loadingStartedAtRef.current > 6000) {
-        setPriorsStatus("idle", "Priors fetch timed out (>6s). Retrying…");
-        loadingStartedAtRef.current = null;
-        startedRef.current = false;
-      }
-      return;
-    }
-
-    // Only start automatically when idle.
-    if (priorsStatus !== "idle") return;
     if (startedRef.current) return;
     startedRef.current = true;
 
-    const ctrl = new AbortController();
-
     const run = async () => {
-      setPriorsStatus("loading");
-      loadingStartedAtRef.current = Date.now();
+      // If someone already loaded priors before mount completes, do nothing.
+      const st0 = useInstrumentStore.getState();
+      if (st0.priorsStatus === "ready") return;
 
-      try {
-        // Use absolute URL to avoid any basePath / middleware oddities in dev
-        const url =
-          typeof window !== "undefined"
-            ? `${window.location.origin}/api/priors`
-            : "/api/priors";
+      ctrlRef.current = new AbortController();
+      const ctrl = ctrlRef.current;
 
-        const res = await fetch(url, {
-          method: "GET",
-          signal: ctrl.signal,
-          cache: "no-store",
-          headers: { "accept": "application/json" }
-        });
+      const url =
+        typeof window !== "undefined"
+          ? `${window.location.origin}/api/priors`
+          : "/api/priors";
 
-        if (!res.ok) {
-          let bodyText = "";
+      let attempt = 0;
+      const maxAttempts = 3; // 1 initial + 2 retries
+
+      const clearTimers = () => {
+        if (watchdogRef.current) window.clearTimeout(watchdogRef.current);
+        if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
+        watchdogRef.current = null;
+        retryTimerRef.current = null;
+      };
+
+      const doAttempt = async () => {
+        attempt += 1;
+        setPriorsStatus("loading");
+
+        // Watchdog: if request hangs, abort it and retry (or fail)
+        clearTimers();
+        watchdogRef.current = window.setTimeout(() => {
           try {
-            bodyText = await res.text();
+            ctrl.abort();
           } catch {
             // ignore
           }
-          throw new Error(
-            `priors failed: ${res.status} ${res.statusText}${bodyText ? ` — ${bodyText.slice(0, 300)}` : ""}`
-          );
+        }, 8000);
+
+        try {
+          const res = await fetch(url, {
+            method: "GET",
+            signal: ctrl.signal,
+            cache: "no-store",
+            headers: { accept: "application/json" }
+          });
+
+          if (!res.ok) {
+            let bodyText = "";
+            try {
+              bodyText = await res.text();
+            } catch {
+              // ignore
+            }
+            throw new Error(
+              `priors failed: ${res.status} ${res.statusText}${
+                bodyText ? ` — ${bodyText.slice(0, 300)}` : ""
+              }`
+            );
+          }
+
+          const data = await res.json();
+          clearTimers();
+          setPriors(data);
+          setPriorsStatus("ready");
+        } catch (e: any) {
+          clearTimers();
+
+          // If we aborted due to navigation/unmount, stop quietly
+          if (e?.name === "AbortError") {
+            // If this abort came from the watchdog, we can retry with a fresh controller:
+            if (attempt < maxAttempts) {
+              ctrlRef.current = new AbortController();
+              retryTimerRef.current = window.setTimeout(() => {
+                // swap controller for the next attempt
+                const nextCtrl = ctrlRef.current!;
+                // rebind ctrl for the next attempt by shadowing in closure:
+                // easiest: call doAttempt again via a small wrapper that uses ctrlRef.current
+                // but keep it simple: just reload page state by restarting run is overkill.
+              }, 0);
+            }
+            // Instead of complicated controller swapping, just treat watchdog abort as failure and retry below.
+          }
+
+          const msg = e?.message ?? "priors error";
+
+          if (attempt < maxAttempts) {
+            // Backoff: 400ms, 800ms
+            const delay = 400 * attempt;
+            setPriorsStatus("error", `${msg} — retrying (${attempt}/${maxAttempts - 1})…`);
+            retryTimerRef.current = window.setTimeout(() => {
+              // New controller per attempt
+              ctrlRef.current = new AbortController();
+              doAttemptWithCurrentController();
+            }, delay);
+            return;
+          }
+
+          setPriorsStatus("error", msg);
         }
+      };
 
-        const data = await res.json();
-        setPriors(data);
-        setPriorsStatus("ready");
-        retryCountRef.current = 0;
-        loadingStartedAtRef.current = null;
-      } catch (e: any) {
-        if (e?.name === "AbortError") return;
+      const doAttemptWithCurrentController = async () => {
+        // Re-point ctrl to the latest controller
+        const currentCtrl = ctrlRef.current;
+        if (!currentCtrl) return;
 
-        const msg = e?.message ?? "priors error";
-        setPriorsStatus("error", msg);
-        loadingStartedAtRef.current = null;
+        // Update ctrl used by fetch + watchdog by mutating the captured `ctrl` reference:
+        // We can’t reassign the const `ctrl`, so we just run the same logic but
+        // referencing ctrlRef.current inside.
+        attempt += 1;
+        setPriorsStatus("loading");
 
-        // Retry a couple times automatically
-        if (retryCountRef.current < 2) {
-          retryCountRef.current += 1;
-          const delay = 400 * retryCountRef.current; // 400ms, 800ms
-          retryTimerRef.current = window.setTimeout(() => {
-            startedRef.current = false;
-            setPriorsStatus("idle", `Retrying priors… (attempt ${retryCountRef.current + 1})`);
-          }, delay);
+        clearTimers();
+        watchdogRef.current = window.setTimeout(() => {
+          try {
+            ctrlRef.current?.abort();
+          } catch {
+            // ignore
+          }
+        }, 8000);
+
+        try {
+          const res = await fetch(url, {
+            method: "GET",
+            signal: ctrlRef.current?.signal,
+            cache: "no-store",
+            headers: { accept: "application/json" }
+          });
+
+          if (!res.ok) {
+            let bodyText = "";
+            try {
+              bodyText = await res.text();
+            } catch {
+              // ignore
+            }
+            throw new Error(
+              `priors failed: ${res.status} ${res.statusText}${
+                bodyText ? ` — ${bodyText.slice(0, 300)}` : ""
+              }`
+            );
+          }
+
+          const data = await res.json();
+          clearTimers();
+          setPriors(data);
+          setPriorsStatus("ready");
+        } catch (e: any) {
+          clearTimers();
+          if (e?.name === "AbortError") {
+            // treat watchdog abort as a normal failure that can retry
+          }
+
+          const msg = e?.message ?? "priors error";
+
+          if (attempt < maxAttempts) {
+            const delay = 400 * attempt;
+            setPriorsStatus("error", `${msg} — retrying (${attempt}/${maxAttempts - 1})…`);
+            retryTimerRef.current = window.setTimeout(() => {
+              ctrlRef.current = new AbortController();
+              doAttemptWithCurrentController();
+            }, delay);
+            return;
+          }
+
+          setPriorsStatus("error", msg);
         }
-      }
+      };
+
+      // First attempt
+      doAttemptWithCurrentController();
     };
 
     void run();
 
     return () => {
-      ctrl.abort();
+      try {
+        ctrlRef.current?.abort();
+      } catch {
+        // ignore
+      }
+      if (watchdogRef.current) window.clearTimeout(watchdogRef.current);
       if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
     };
-  }, [priorsStatus, priorsError, setPriors, setPriorsStatus]);
+  }, [setPriors, setPriorsStatus]);
 }

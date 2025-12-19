@@ -10,6 +10,7 @@ import { WarningsPanel } from "@/components/WarningsPanel";
 import { ProvenancePanel } from "@/components/ProvenancePanel";
 import { LogsPanel } from "@/components/LogsPanel";
 import { useInstrumentStore } from "@/state/instrumentStore";
+import RDKitPreview from "@/components/RDKitPreview.client";
 
 export default function ModeBPage() {
   const [value, setValue] = useState("O=C(Nc1ccc(OC)cc1)Nc1ccc(OC)cc1"); // placeholder
@@ -38,7 +39,11 @@ export default function ModeBPage() {
 
             <div className="mt-3 space-y-2">
               <Label>SMILES / InChI / repeat-unit tag</Label>
-              <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder="SMILES / tag" />
+              <Input
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder="SMILES / tag"
+              />
               <Button
                 onClick={() => applyChemicalLens(value)}
                 className="w-full"
@@ -49,12 +54,7 @@ export default function ModeBPage() {
               </Button>
             </div>
 
-            <div className="mt-3">
-              <div className="text-sm font-medium">Structure panel</div>
-              <div className="mt-2 rounded-xl2 border border-border bg-surface2 p-3 text-sm text-muted">
-                (Placeholder) Rendered structure / summary would go here.
-              </div>
-            </div>
+            <RDKitPreview smiles={value} />
           </CardBody>
         </Card>
 

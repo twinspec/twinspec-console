@@ -10,15 +10,16 @@ const nav: NavItem[] = [
   { href: "/console", label: "Demo Console" },
   { href: "/docs", label: "Docs" },
   { href: "/app/data", label: "Data" },
-  { href: "/app/console", label: "Console" }
+  { href: "/app/console", label: "Console" },
 ];
 
 export function SiteShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="sticky top-0 z-50 backdrop-blur border-b border-border/80 bg-bg/70">
+    <div className="min-h-[100dvh] flex flex-col bg-bg text-ink">
+      {/* Header stays fixed; content scrolls beneath it */}
+      <header className="sticky top-0 z-50 backdrop-blur border-b border-border/80 bg-bg/70 shrink-0">
         <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
           <Link href="/" className="font-semibold tracking-tight text-ink">
             TwinSpec
@@ -29,13 +30,12 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
               const active =
                 pathname === item.href ||
                 (item.href !== "/" && pathname.startsWith(item.href));
+
               return (
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={
-                    active ? "text-ink" : "hover:text-ink transition-colors"
-                  }
+                  className={active ? "text-ink" : "hover:text-ink transition-colors"}
                 >
                   {item.label}
                 </Link>
@@ -45,9 +45,16 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="flex-1">{children}</main>
+      {/* IMPORTANT:
+          - flex-1 makes main take remaining height
+          - min-h-0 prevents nested grids from forcing overflow into the shell
+          - overflow-y-auto ensures footer stays at bottom while main scrolls
+      */}
+      <main className="flex-1 min-h-0 overflow-y-auto">
+        <div className="mx-auto max-w-6xl px-6 py-8">{children}</div>
+      </main>
 
-      <footer className="border-t border-border">
+      <footer className="border-t border-border shrink-0">
         <div className="mx-auto max-w-6xl px-6 py-10 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="text-sm text-muted">
             <div className="font-medium text-ink">TwinSpec</div>

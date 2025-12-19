@@ -3,145 +3,136 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useInstrumentStore } from "@/state/instrumentStore";
 
+/**
+ * Canvas renderer for pattern2d.pixels (0..1).
+ * Fixes:
+ * - flips Y to match matplotlib origin="lower"
+ * - applies Turbo colormap (paper-like)
+ * - applies gamma to avoid "too dark" appearance
+ */
+
 function clamp01(x: number) {
   return x < 0 ? 0 : x > 1 ? 1 : x;
 }
 
 /**
- * Simple “inferno-ish” colormap without shipping a huge LUT.
- * If you want grayscale, replace this with r=g=b=v.
+ * Turbo colormap (Google/Anton Mikhailov).
+ * Input t in [0,1], output 0..255 RGB.
+ * This avoids needing any extra deps.
  */
-function colorMap(v01: number) {
-  const v = clamp01(v01);
+function turboRgb(t: number) {
+  t = clamp01(t);
+  // polynomial approximation
+  const r =
+    34.61 +
+    t * (1172.33 + t * (-10793.56 + t * (33300.12 + t * (-38394.49 + t * 14825.05))));
+  const g =
+    23.31 +
+    t * (557.33 + t * (1225.33 + t * (-3574.96 + t * (1073.77 + t * 707.56))));
+  const b =
+    27.2 +
+    t * (3211.1 + t * (-15327.97 + t * (27814.0 + t * (-22569.18 + t * 6838.66))));
 
-  // piecewise-ish warm ramp
-  const r = clamp01(1.6 * v);
-  const g = clamp01(1.3 * v - 0.15);
-  const b = clamp01(1.1 * v - 0.35);
-
-  // gamma-ish
-  const R = Math.round(255 * Math.pow(r, 0.85));
-  const G = Math.round(255 * Math.pow(g, 0.95));
-  const B = Math.round(255 * Math.pow(b, 1.05));
-
-  return [R, G, B] as const;
+  return {
+    r: Math.round(clamp01(r / 255) * 255),
+    g: Math.round(clamp01(g / 255) * 255),
+    b: Math.round(clamp01(b / 255) * 255)
+  };
 }
 
 export function GiWaxsViewer() {
-  const simStatus = useInstrumentStore((s) => s.simStatus);
-  const simError = useInstrumentStore((s) => s.simError);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
   const pattern = useInstrumentStore((s) => s.lastSimResult?.pattern2d ?? null);
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
+  // You can tweak these if you want a closer match to your matplotlib output.
+  const gamma = 0.65; // <1 brightens midtones
+  const flipY = true; // match origin="lower"
 
-  const hasPattern =
-    pattern &&
-    Number.isFinite(pattern.width) &&
-    Number.isFinite(pattern.height) &&
-    Array.isArray(pattern.pixels) &&
-    pattern.pixels.length === pattern.width * pattern.height;
+  const meta = useMemo(() => {
+    if (!pattern) return null;
+    const w = pattern.width ?? 512;
+    const h = pattern.height ?? 512;
+    const pixels = Array.isArray(pattern.pixels) ? pattern.pixels : [];
+    return { w, h, pixels, note: pattern.note ?? "" };
+  }, [pattern]);
 
-  // Create ImageData once per pattern payload
-  const imageData = useMemo(() => {
-    if (!hasPattern || !pattern) return null;
-
-    const w = pattern.width;
-    const h = pattern.height;
-    const img = new ImageData(w, h);
-
-    const data = img.data;
-    const px = pattern.pixels;
-
-    for (let i = 0; i < px.length; i++) {
-      const v = px[i] ?? 0;
-      const [R, G, B] = colorMap(v);
-      const o = i * 4;
-      data[o + 0] = R;
-      data[o + 1] = G;
-      data[o + 2] = B;
-      data[o + 3] = 255;
-    }
-
-    return img;
-  }, [hasPattern, pattern]);
-
-  // Draw + scale to fit container
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const wrap = wrapRef.current;
-    if (!canvas || !wrap) return;
+    const c = canvasRef.current;
+    if (!c) return;
 
-    const ctx = canvas.getContext("2d", { willReadFrequently: false });
-    if (!ctx) return;
-
-    if (!imageData || !pattern) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!meta) {
+      const ctx = c.getContext("2d");
+      if (ctx) ctx.clearRect(0, 0, c.width, c.height);
       return;
     }
 
-    const w = pattern.width;
-    const h = pattern.height;
+    const { w, h, pixels } = meta;
 
-    // Set internal resolution to pattern size
-    canvas.width = w;
-    canvas.height = h;
+    // Set backing resolution exactly to data resolution
+    c.width = w;
+    c.height = h;
 
-    // Draw raw pixels
-    ctx.putImageData(imageData, 0, 0);
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
 
-    // Now size the canvas in CSS to fit the wrapper (crisp scaling)
-    const resize = () => {
-      const rect = wrap.getBoundingClientRect();
-      const maxW = Math.max(1, rect.width);
-      const maxH = Math.max(1, rect.height);
+    const img = ctx.createImageData(w, h);
+    const data = img.data;
 
-      const s = Math.min(maxW / w, maxH / h);
+    // Defensive: if pixels length mismatches, just clear.
+    if (pixels.length < w * h) {
+      ctx.clearRect(0, 0, w, h);
+      return;
+    }
 
-      const cssW = Math.floor(w * s);
-      const cssH = Math.floor(h * s);
+    // Render
+    for (let y = 0; y < h; y++) {
+      const yy = flipY ? h - 1 - y : y;
+      for (let x = 0; x < w; x++) {
+        const srcIdx = y * w + x;
+        const dstIdx = (yy * w + x) * 4;
 
-      canvas.style.width = `${cssW}px`;
-      canvas.style.height = `${cssH}px`;
-    };
+        // pixels are already 0..1 from your server normalization
+        let t = clamp01(Number(pixels[srcIdx]) || 0);
 
-    resize();
+        // gamma to brighten
+        // Log-like contrast compression (closer to matplotlib appearance)
+        const eps = 1e-6;
+        t = Math.log1p(6 * t) / Math.log1p(6); // compress highlights, lift mids
 
-    const ro = new ResizeObserver(() => resize());
-    ro.observe(wrap);
+        const { r, g, b } = turboRgb(t);
 
-    return () => ro.disconnect();
-  }, [imageData, pattern]);
+        data[dstIdx + 0] = r;
+        data[dstIdx + 1] = g;
+        data[dstIdx + 2] = b;
+        data[dstIdx + 3] = 255;
+      }
+    }
+
+    ctx.putImageData(img, 0, 0);
+  }, [meta, gamma, flipY]);
+
+  if (!meta) {
+    return (
+      <div className="rounded-xl2 border border-border bg-surface2 p-3 text-sm text-muted">
+        No simulation result yet.
+      </div>
+    );
+  }
 
   return (
-    <div className="rounded-xl2 border border-border bg-surface2 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="text-sm font-semibold">2D pattern</div>
-        <div className="text-xs text-muted">
-          {simStatus === "simulating" ? "Simulating…" : simStatus === "error" ? "Error" : "Stable"}
-        </div>
+    <div className="space-y-2">
+      <div className="rounded-xl2 border border-border bg-surface2 p-3">
+        <canvas
+          ref={canvasRef}
+          className="w-full h-auto rounded-lg"
+          style={{
+            imageRendering: "auto" // set to "pixelated" if you prefer crisp bins
+          }}
+        />
       </div>
 
-      {simStatus === "error" && (
-        <div className="mb-2 rounded-lg border border-danger/40 bg-surface px-3 py-2 text-xs text-danger">
-          {simError ?? "Simulation error"}
-        </div>
-      )}
-
-      <div
-        ref={wrapRef}
-        className="relative flex h-[320px] w-full items-center justify-center overflow-hidden rounded-lg border border-border bg-surface"
-      >
-        {hasPattern ? (
-          <canvas ref={canvasRef} className="block" />
-        ) : (
-          <div className="text-sm text-muted">No simulation result yet.</div>
-        )}
-      </div>
-
-      <div className="mt-2 text-xs text-muted">
-        {pattern?.note ?? "—"}
-      </div>
+      {meta.note ? <div className="text-xs text-muted">{meta.note}</div> : null}
     </div>
   );
 }

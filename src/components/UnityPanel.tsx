@@ -1,21 +1,31 @@
 "use client";
 
+import Image from "next/image";
 import { useInstrumentStore } from "@/state/instrumentStore";
-import { Card, CardBody } from "@/components/ui";
 
-export function UnityPanel() {
+export function UnityPanel({ imageSrc }: { imageSrc: string }) {
   const unityStatus = useInstrumentStore((s) => s.unityStatus);
   const subset = useInstrumentStore((s) => ({
     datasetId: s.instrumentState.dataset.id,
     sample: s.instrumentState.sample,
-    geometry: s.instrumentState.geometry
+    geometry: s.instrumentState.geometry,
   }));
 
   return (
-    <div className="h-full w-full rounded-xl2 border border-border bg-surface2 p-3">
-      <div className="text-sm text-muted">
-        (Placeholder) Unity view would render here. The web app remains authoritative.
+    <div className="w-full rounded-xl2 border border-border bg-surface2 p-3">
+      {/* Image placeholder */}
+      <div className="relative w-full overflow-hidden rounded-xl2 border border-border bg-black/5">
+        <div className="relative aspect-[16/9] w-full">
+          <Image
+            src="/images/unity/giwaxs-instrument-placeholder.png"
+            alt="Unity GIWAXS instrument placeholder"
+            fill
+            className="object-contain"
+            priority
+          />
+        </div>
       </div>
+
       <div className="mt-3 grid gap-2 md:grid-cols-2">
         <div className="rounded-xl2 border border-border bg-surface p-2">
           <div className="text-xs font-medium text-muted">Last pushed</div>
@@ -30,6 +40,10 @@ export function UnityPanel() {
             {JSON.stringify(subset, null, 2)}
           </pre>
         </div>
+      </div>
+
+      <div className="mt-2 text-xs text-muted">
+        Placeholder: Unity WebGL view will render here later; web console remains authoritative.
       </div>
     </div>
   );

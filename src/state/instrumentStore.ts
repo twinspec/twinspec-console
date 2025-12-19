@@ -5,11 +5,27 @@ import { nowISO } from "@/lib/utils";
 
 export type InteractionIntent = "live" | "commit" | "click";
 
+export type LakehouseBinding = {
+  giwaxs2d_core_path: string;
+  characterization_json_path?: string;
+  experiment_json_path?: string;
+  method_json_path?: string;
+  paper_id?: string;
+  reference_doi?: string;
+  anneal_temp_C?: number | null;
+  solvent?: string;
+  thickness_nominal_nm?: number;
+  peaks_json?: Record<string, number>;
+  dspacing_json?: Record<string, number>;
+  casting_parameters_json?: Record<string, any>;
+} | null;
+
 export type DatasetPrior = {
-  id: string;
+  id: string; // we will use experiment_id as dataset id
   label: string;
   materialClass: string;
   tags: string[];
+  lakehouse?: LakehouseBinding;
   defaults: {
     geometry: { ai_deg: number; phi_deg: number; detDist_mm: number; detTilt_deg: number; beamCenter_x: number; beamCenter_y: number };
     acquisition: { exposure_s: number; binning: 1 | 2 | 4; frames: number };
@@ -37,7 +53,7 @@ export type SimResult = {
   };
   metrics: Record<string, number>;
   warnings: Array<{ code: string; level: "warn" | "danger" | "info"; message: string }>;
-  provenance: { simId: string; ts: string; model: string; datasetId: string; hash: string };
+  provenance: { simId: string; ts: string; model: string; datasetId: string; hash: string; extra?: Record<string, any> };
   logs: Array<{ ts: string; level: "info" | "warn" | "error"; message: string }>;
 };
 
@@ -47,6 +63,7 @@ export type InstrumentState = {
     label: string;
     materialClass: string;
     tags: string[];
+    lakehouse?: LakehouseBinding;
   };
   sample: {
     thickness_nm: number;
@@ -77,10 +94,9 @@ export type InstrumentState = {
   };
 };
 
-
 export type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends (infer U)[]
-    ? U[] // keep arrays simple for now
+    ? U[]
     : T[K] extends object
       ? DeepPartial<T[K]>
       : T[K];
@@ -112,13 +128,11 @@ type Store = {
 
   plannerProposal: PlannerProposal | null;
 
-  // actions
   setPriors: (priors: PriorsResponse) => void;
   setPriorsStatus: (s: Store["priorsStatus"], err?: string) => void;
 
   setDataset: (datasetId: string) => void;
   applyPatch: (patch: DeepPartial<InstrumentState>, intent?: InteractionIntent, source?: string) => void;
-
 
   persistCurrentDataset: () => void;
   hydrateDataset: (datasetId: string) => void;
@@ -142,7 +156,7 @@ function storageKey(datasetId: string) {
 
 function defaultState(): InstrumentState {
   return {
-    dataset: { id: "unknown", label: "Unknown", materialClass: "unknown", tags: [] },
+    dataset: { id: "unknown", label: "Unknown", materialClass: "unknown", tags: [], lakehouse: null },
     sample: { thickness_nm: 100, processTag: "spincoat" },
     geometry: {
       ai_deg: 0.12,
@@ -165,7 +179,13 @@ function buildDefaultForDataset(priors: PriorsResponse, datasetId: string): Inst
   if (!d) return defaultState();
 
   return {
-    dataset: { id: d.id, label: d.label, materialClass: d.materialClass, tags: d.tags },
+    dataset: {
+      id: d.id,
+      label: d.label,
+      materialClass: d.materialClass,
+      tags: d.tags,
+      lakehouse: d.lakehouse ?? null
+    },
     sample: { ...d.defaults.sample },
     geometry: {
       ...d.defaults.geometry,
@@ -196,7 +216,7 @@ export const useInstrumentStore = create<Store>((set, get) => ({
 
   setPriors: (priors) => {
     set({ priors });
-    // if we haven't got a real dataset yet, initialize to default
+
     const currentId = get().instrumentState.dataset.id;
     if (currentId === "unknown") {
       get().setDataset(priors.defaultDatasetId);
@@ -209,13 +229,8 @@ export const useInstrumentStore = create<Store>((set, get) => ({
     const priors = get().priors;
     if (!priors) return;
 
-    // persist current
     get().persistCurrentDataset();
-
-    // hydrate new dataset (persisted or default)
     get().hydrateDataset(datasetId);
-
-    // mark interaction as commit (dataset switch should simulate)
     get().setLastInteraction({ intent: "commit", source: "dataset" });
   },
 
@@ -224,7 +239,6 @@ export const useInstrumentStore = create<Store>((set, get) => ({
       instrumentState: deepMerge(s.instrumentState, patch),
       lastInteraction: { intent, at: Date.now(), source }
     }));
-    // persist after state mutation (dataset-aware)
     get().persistCurrentDataset();
   },
 
@@ -248,11 +262,22 @@ export const useInstrumentStore = create<Store>((set, get) => ({
       const raw = window.localStorage.getItem(storageKey(datasetId));
       if (raw) {
         const parsed = JSON.parse(raw) as InstrumentState;
+        // Safety: refresh lakehouse binding from current priors (in case schema changed)
+        const d = priors.datasets.find((x) => x.id === datasetId);
+        if (d) {
+          parsed.dataset = {
+            ...parsed.dataset,
+            label: d.label,
+            materialClass: d.materialClass,
+            tags: d.tags,
+            lakehouse: d.lakehouse ?? null
+          };
+        }
         set({ instrumentState: parsed });
         return;
       }
     } catch {
-      // fall through to defaults
+      // fall through
     }
 
     const next = buildDefaultForDataset(priors, datasetId);
@@ -293,21 +318,19 @@ export const useInstrumentStore = create<Store>((set, get) => ({
     const prop = get().plannerProposal;
     if (!prop) return;
 
-    // merge patch into state, and force one simulate
     get().applyPatch(prop.patch, "click", "planner-accept");
     set({ plannerProposal: null });
   },
 
   applyChemicalLens: (identifier) => {
-    // Minimal hackathon mapping: treat certain substrings as “classes”
     const lower = identifier.toLowerCase();
     const inferred =
-      lower.includes("ndi") || lower.includes("t2") || lower.includes("donor") ? "conjugated-polymer" : "generic-organic";
+      lower.includes("ndi") || lower.includes("t2") || lower.includes("donor")
+        ? "conjugated-polymer"
+        : "generic-organic";
 
     get().applyPatch(
-      {
-        sample: { processTag: inferred === "conjugated-polymer" ? "aligned-coating" : "spincoat" }
-      },
+      { sample: { processTag: inferred === "conjugated-polymer" ? "aligned-coating" : "spincoat" } },
       "click",
       "chemical-lens"
     );

@@ -14,30 +14,30 @@ export function DatasetPicker() {
   const options =
     priors?.datasets.map((d) => ({ value: d.id, label: `${d.label} · ${d.materialClass}` })) ?? [];
 
-  const fallbackLabel =
-    priorsStatus === "error"
-      ? `Priors error (see below)`
-      : priorsStatus === "loading"
-        ? "Loading priors…"
-        : "No priors yet…";
+  const canChange = priorsStatus === "ready";
 
   return (
     <div className="min-w-[260px]">
       <Label>Dataset</Label>
-
       <Select
         value={datasetId}
-        onChange={setDataset}
-        options={options.length ? options : [{ value: datasetId, label: fallbackLabel }]}
+        onChange={(v) => {
+          if (!canChange) return;
+          setDataset(v);
+        }}
+        options={
+          options.length
+            ? options
+            : [{ value: datasetId, label: priorsStatus === "error" ? "Priors failed" : "Loading priors…" }]
+        }
       />
-
       {priorsStatus === "error" && (
-        <div className="mt-2 text-xs text-red-600">
-          {priorsError ?? "Unknown priors error."}
-          <div className="mt-1 text-[11px] text-muted">
-            Tip: open DevTools → Network and confirm GET /api/priors is 200.
-          </div>
+        <div className="mt-1 text-xs text-danger">
+          {priorsError ?? "Failed to load /api/priors."}
         </div>
+      )}
+      {priorsStatus !== "ready" && priorsStatus !== "error" && (
+        <div className="mt-1 text-xs text-muted">Loading priors…</div>
       )}
     </div>
   );

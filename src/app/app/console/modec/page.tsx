@@ -14,7 +14,7 @@ import { PlannerPanel } from "@/components/PlannerPanel";
 
 export default function ModeCPage() {
   return (
-    <div className="h-full w-full">
+    <div className="w-full">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold">Mode C</h1>
@@ -28,33 +28,30 @@ export default function ModeCPage() {
         </div>
       </div>
 
-      <div className="grid h-[calc(100vh-190px)] gap-4 lg:grid-cols-12">
-        {/* Left fixed: Controls */}
+      {/* Let the shell/main handle height + scrolling */}
+      <div className="grid gap-4 lg:grid-cols-12">
         <Card className="lg:col-span-3">
-          <CardBody className="h-full">
+          <CardBody className="space-y-3">
             <div className="text-sm font-medium">Controls</div>
-            <div className="mt-3 space-y-3">
-              <InstrumentControls mode="C" />
-              <PlannerPanel />
-            </div>
+            <InstrumentControls mode="C" />
+            <PlannerPanel />
           </CardBody>
         </Card>
 
-        {/* Center fluid: Unity + GIWAXS stacked */}
-        <div className="lg:col-span-6 grid h-full grid-rows-2 gap-4">
-          <Card className="row-span-1">
-            <CardBody className="h-full">
+        <div className="lg:col-span-6 grid gap-4">
+          <Card>
+            <CardBody>
               <div className="text-sm font-medium">Unity Visual Twin</div>
-              <div className="mt-2 h-[calc(100%-28px)]">
-                <UnityPanel />
+              <div className="mt-2">
+                <UnityPanel imageSrc="/unity/giwaxs-placeholder.png" />
               </div>
             </CardBody>
           </Card>
 
-          <Card className="row-span-1">
-            <CardBody className="h-full">
+          <Card>
+            <CardBody>
               <div className="text-sm font-medium">GIWAXS Data Twin</div>
-              <div className="mt-2 grid h-[calc(100%-28px)] grid-cols-2 gap-3">
+              <div className="mt-2 grid gap-3 md:grid-cols-2">
                 <GiWaxsViewer />
                 <MetricsPanel />
               </div>
@@ -62,11 +59,11 @@ export default function ModeCPage() {
           </Card>
         </div>
 
-        {/* Right fixed: Warnings / Provenance / Logs */}
-        <div className="lg:col-span-3 grid h-full grid-rows-3 gap-4">
+        <div className="lg:col-span-3 grid gap-4">
           <WarningsPanel />
           <ProvenancePanel />
           <LogsPanel />
+          {/* Optional: ProvenancePanel + LogsPanel can be “compact” if needed */}
         </div>
       </div>
     </div>

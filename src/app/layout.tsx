@@ -1,5 +1,6 @@
 import "./globals.css";
 import type { Metadata } from "next";
+import { SiteShell } from "@/components/SiteShell";
 
 export const metadata: Metadata = {
   title: "TwinSpec Console",
@@ -8,9 +9,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body>
-        <div className="min-h-screen">{children}</div>
+    <html lang="en" suppressHydrationWarning>
+      <body suppressHydrationWarning>
+        <SiteShell>{children}</SiteShell>
       </body>
     </html>
   );
