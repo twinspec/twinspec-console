@@ -35,21 +35,67 @@ This repository contains the **console application** only. It is designed to orc
 ```
 src/
 ├─ app/
-│  ├─ console/
-│  │  ├─ instrument/   # Instrument Console page
-│  │  └─ data/         # Data Viewer page
-│  └─ api/             # Mock APIs (/simulate, /priors)
+│ ├─ (site)/ # Public site routes (optional grouping)
+│ │ ├─ page.tsx # /
+│ │ ├─ docs/
+│ │ │ └─ page.tsx # /docs
+│ │ └─ console/
+│ │ └─ page.tsx # /console (demo landing, optional)
+│ │
+│ ├─ app/
+│ │ ├─ console/
+│ │ │ ├─ layout.tsx # ConsoleShell wrapper (sidebar + content)
+│ │ │ ├─ page.tsx # /app/console (index/redirect)
+│ │ │ ├─ modea/
+│ │ │ │ └─ page.tsx # Mode A
+│ │ │ ├─ modeb/
+│ │ │ │ └─ page.tsx # Mode B
+│ │ │ └─ modec/
+│ │ │ └─ page.tsx # Mode C (primary demo)
+│ │ │
+│ │ └─ data/
+│ │ └─ page.tsx # /app/data (data viewer)
+│ │
+│ └─ api/
+│ ├─ priors/
+│ │ └─ route.ts # GET priors (dataset registry + lakehouse binding)
+│ └─ simulate/
+│ └─ route.ts # POST simulate (returns SimResult)
 │
 ├─ components/
-│  └─ console/         # Console UI components
+│ ├─ shell/
+│ │ ├─ SiteShell.tsx # Top nav + footer (global)
+│ │ └─ ConsoleShell.tsx # Console layout grid (sidebar + main)
+│ │
+│ ├─ console/
+│ │ ├─ ConsoleSidebar.tsx # Left nav inside /app/console
+│ │ ├─ DatasetPicker.tsx # Dataset dropdown (wired to priors/store)
+│ │ ├─ SimIndicator.tsx # Last OK + sim status
+│ │ ├─ InstrumentControls.tsx # Sample/Geometry/Acquisition inputs
+│ │ ├─ PlannerPanel.tsx # “Recommend patch” staging UI
+│ │ ├─ UnityPanel.tsx # Unity placeholder panel (image + payload snapshot)
+│ │ ├─ GiWaxsViewer.tsx # 2D pattern canvas renderer
+│ │ ├─ MetricsPanel.tsx # scalar metrics + linecut preview
+│ │ ├─ WarningsPanel.tsx # warnings list
+│ │ ├─ ProvenancePanel.tsx # simId/model/hash/timestamp
+│ │ └─ LogsPanel.tsx # logs stream
+│ │
+│ └─ ui/
+│ ├─ Card.tsx / index.ts # Card, CardBody, Button, Label wrappers
+│ └─ ... # shared UI primitives
 │
 ├─ state/
-│  └─ InstrumentStateContext.tsx
+│ └─ instrumentStore.ts # Zustand store (canonical state + persistence + sim result)
 │
-└─ lib/
-   ├─ types.ts         # Canonical state + API types
-   ├─ defaults.ts     # Default instrument state
-   └─ storage.ts      # Local persistence
+├─ lib/
+│ ├─ types.ts # Shared types (PriorsResponse, SimResult, InstrumentState)
+│ ├─ utils.ts # cn(), clamp(), nowISO(), formatting helpers
+│ └─ lakehouse.ts # (optional) helpers for lakehouse bindings/paths
+│
+└─ public/
+└─ images/
+└─ unity/
+└─ giwaxs-instrument-placeholder.png
 ```
 
 
